@@ -23,6 +23,7 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.volley.DefaultRetryPolicy;
+import com.android.volley.Request.Method;
 import com.android.volley.Response;
 import com.android.volley.VolleyError;
 import com.android.volley.VolleyLog;
@@ -30,6 +31,7 @@ import com.android.volley.VolleyLog;
 import com.cyanogenmod.updater.R;
 import com.cyanogenmod.updater.UpdateApplication;
 import com.cyanogenmod.updater.requests.UpdatesJsonObjectRequest;
+import com.cyanogenmod.updater.requests.UpdatesPlainFileRequest;
 import com.cyanogenmod.updater.UpdatesSettings;
 import com.cyanogenmod.updater.misc.Constants;
 import com.cyanogenmod.updater.misc.State;
@@ -75,6 +77,18 @@ public class UpdateCheckService extends IntentService
     // DefaultRetryPolicy values for Volley
     private static final int UPDATE_REQUEST_TIMEOUT = 5000; // 5 seconds
     private static final int UPDATE_REQUEST_MAX_RETRIES = 3;
+
+    Response.Listener<String> plainResponseListener = new Response.Listener<String>() {
+        public void onResponse(String body) {
+            Log.i(TAG, "Plain response: " + body);
+            try {
+                JSONObject result = new JSONObject(body);
+                UpdateCheckService.this.onResponse(result);
+            } catch (JSONException e) {
+                Log.e(TAG, "Cannot parse the body as JSON result", e);
+            }
+        }
+    };
 
     public UpdateCheckService() {
         super("UpdateCheckService");
@@ -218,21 +232,36 @@ public class UpdateCheckService extends IntentService
 
         // Get the actual ROM Update Server URL
         URI updateServerUri = getServerURI();
-        UpdatesJsonObjectRequest request;
-        try {
-            request = new UpdatesJsonObjectRequest(updateServerUri.toASCIIString(),
-                    Utils.getUserAgentString(this), buildUpdateRequest(updateType), this, this);
+        String propertyType = SystemProperties.get("cm.updater.type");
+        if ("plain".equals(propertyType)) {
+            UpdatesPlainFileRequest request;
+            String plainFileUri = "";
+            request = new UpdatesPlainFileRequest(Method.GET, updateServerUri.toASCIIString(),
+                        Utils.getUserAgentString(this), plainResponseListener, this);
             // Improve request error tolerance
             request.setRetryPolicy(new DefaultRetryPolicy(UPDATE_REQUEST_TIMEOUT,
-                        UPDATE_REQUEST_MAX_RETRIES, DefaultRetryPolicy.DEFAULT_BACKOFF_MULT));
+                            UPDATE_REQUEST_MAX_RETRIES, DefaultRetryPolicy.DEFAULT_BACKOFF_MULT));
             // Set the tag for the request, reuse logging tag
             request.setTag(TAG);
-        } catch (JSONException e) {
-            Log.e(TAG, "Could not build request", e);
-            return;
+
+            ((UpdateApplication) getApplicationContext()).getQueue().add(request);
+        } else {
+            UpdatesJsonObjectRequest request;
+            try {
+                request = new UpdatesJsonObjectRequest(updateServerUri.toASCIIString(),
+                        Utils.getUserAgentString(this), buildUpdateRequest(updateType), this, this);
+                // Improve request error tolerance
+                request.setRetryPolicy(new DefaultRetryPolicy(UPDATE_REQUEST_TIMEOUT,
+                            UPDATE_REQUEST_MAX_RETRIES, DefaultRetryPolicy.DEFAULT_BACKOFF_MULT));
+                // Set the tag for the request, reuse logging tag
+                request.setTag(TAG);
+            } catch (JSONException e) {
+                Log.e(TAG, "Could not build request", e);
+                return;
+            }
+            ((UpdateApplication) getApplicationContext()).getQueue().add(request);
         }
 
-        ((UpdateApplication) getApplicationContext()).getQueue().add(request);
     }
 
     private JSONObject buildUpdateRequest(int updateType) throws JSONException {

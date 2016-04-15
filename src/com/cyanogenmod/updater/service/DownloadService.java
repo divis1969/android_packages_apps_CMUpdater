@@ -219,6 +219,10 @@ public class DownloadService extends IntentService
     @Override
     public void onErrorResponse(VolleyError error) {
         VolleyLog.e("Error: ", error.getMessage());
+        String propertyType = SystemProperties.get("cm.updater.type");
+        if ("plain".equals(propertyType)) {
+            downloadFullZip();
+        }
     }
 
     @Override
