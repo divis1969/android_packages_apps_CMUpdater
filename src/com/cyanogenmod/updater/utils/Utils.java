@@ -36,15 +36,16 @@ import com.cyanogenmod.updater.service.UpdateCheckService;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
 
 public class Utils {
     private Utils() {
         // this class is not supposed to be instantiated
     }
 
-    public static File makeUpdateFolder() {
-        return new File(Environment.getExternalStorageDirectory(),
-                Constants.UPDATES_FOLDER);
+    public static File makeUpdateFolder(Context context) {
+        return context.getDir(Constants.UPDATES_FOLDER, Context.MODE_PRIVATE);
     }
 
     public static void cancelNotification(Context context) {
@@ -70,8 +71,39 @@ public class Utils {
         return SystemProperties.getLong("ro.build.date.utc", 0);
     }
 
-    public static String getIncremental() {
-        return SystemProperties.get("ro.build.version.incremental");
+    /**
+     * Extract date from build YYYYMMDD date
+     *
+     * @param mContext for getting localized string
+     *
+     * @return MMMM dd, yyyy formatted date (or localized translation)
+     */
+    public static String getInstalledBuildDateLocalized(Context mContext, String mBuildDate) {
+        if (mBuildDate.length() < 8) {
+            return "";
+        }
+
+        Calendar mCal = Calendar.getInstance();
+        mCal.set(Calendar.YEAR, Integer.parseInt(mBuildDate.substring(0, 4)));
+        mCal.set(Calendar.MONTH, Integer.parseInt(mBuildDate.substring(4, 6)) - 1);
+        mCal.set(Calendar.DAY_OF_MONTH, Integer.parseInt(mBuildDate.substring(6, 8)));
+
+        String mDate = new SimpleDateFormat(mContext.getString(R.string.date_formatting),
+                        mContext.getResources().getConfiguration().locale).format(mCal.getTime());
+
+        int mPosition = 0;
+        boolean mWorking = true;
+        while (mWorking) {
+            if (!Character.isDigit(mDate.charAt(mPosition))) {
+                mWorking = false;
+            } else {
+                mPosition++;
+            }
+        }
+
+        return mDate.substring(0, mPosition) +
+                String.valueOf(mDate.charAt(mPosition)).toUpperCase() +
+                mDate.substring(mPosition + 1, mDate.length());
     }
 
     public static String getUserAgentString(Context context) {
@@ -113,49 +145,37 @@ public class Utils {
     }
 
     public static void triggerUpdate(Context context, String updateFileName) throws IOException {
-        // Add the update folder/file name
-        File primaryStorage = Environment.getExternalStorageDirectory();
-        // If the path is emulated, translate it, if not return the original path
-        String updatePath = Environment.maybeTranslateEmulatedPathToInternal(
-                primaryStorage).getAbsolutePath();
         // Create the path for the update package
-        String updatePackagePath = updatePath + "/" + Constants.UPDATES_FOLDER + "/" + updateFileName;
-
-        /*
-         * maybeTranslateEmulatedPathToInternal requires that we have a full path to a file (not just
-         * a directory) and have read access to the file via both the emulated and actual paths.  As
-         * this is currently done, we lack the ability to read the file via the actual path, so the
-         * translation ends up failing.  Until this is all updated to download and store the file in
-         * a sane way, manually perform the translation that is needed in order for uncrypt to be
-         * able to find the file.
-         */
-        updatePackagePath = updatePackagePath.replace("storage/emulated", "data/media");
+        String updatePackagePath = makeUpdateFolder(context).getPath() + "/" + updateFileName;
 
         // Reboot into recovery and trigger the update
         android.os.RecoverySystem.installPackage(context, new File(updatePackagePath));
     }
 
     public static int getUpdateType() {
-        int updateType = Constants.UPDATE_TYPE_NIGHTLY;
+        String releaseType;
         try {
-            String cmReleaseType = SystemProperties.get(
-                    Constants.PROPERTY_CM_RELEASETYPE);
-
-            // Treat anything that is not SNAPSHOT as NIGHTLY
-            if (!cmReleaseType.isEmpty()) {
-                if (TextUtils.equals(cmReleaseType,
-                        Constants.CM_RELEASETYPE_SNAPSHOT)) {
-                    updateType = Constants.UPDATE_TYPE_SNAPSHOT;
-                }
-            }
-        } catch (RuntimeException ignored) {
+            releaseType = SystemProperties.get(Constants.PROPERTY_CM_RELEASETYPE);
+        } catch (IllegalArgumentException e) {
+            releaseType = Constants.CM_RELEASETYPE_UNOFFICIAL;
         }
 
+        int updateType;
+        switch (releaseType) {
+            case Constants.CM_RELEASETYPE_SNAPSHOT:
+                updateType = Constants.UPDATE_TYPE_SNAPSHOT;
+                break;
+            case Constants.CM_RELEASETYPE_NIGHTLY:
+                updateType = Constants.UPDATE_TYPE_NIGHTLY;
+                break;
+            case Constants.CM_RELEASETYPE_EXPERIMENTAL:
+                updateType = Constants.UPDATE_TYPE_EXPERIMENTAL;
+                break;
+            case Constants.CM_RELEASETYPE_UNOFFICIAL:
+            default:
+                updateType = Constants.UPDATE_TYPE_UNOFFICIAL;
+                break;
+        }
         return updateType;
-    }
-
-    public static boolean hasLeanback(Context context) {
-        PackageManager packageManager = context.getPackageManager();
-        return packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK);
     }
 }
