@@ -14,8 +14,8 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.net.Uri;
-import android.preference.Preference;
-import android.preference.PreferenceActivity;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceViewHolder;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -32,14 +32,15 @@ import com.cyanogenmod.updater.utils.Utils;
 import java.io.File;
 
 public class UpdatePreference extends Preference implements OnClickListener, OnLongClickListener {
-    private static final float DISABLED_ALPHA = 0.4f;
     public static final int STYLE_NEW = 1;
     public static final int STYLE_DOWNLOADING = 2;
     public static final int STYLE_DOWNLOADED = 3;
     public static final int STYLE_INSTALLED = 4;
+    public static final int STYLE_COMPLETING = 5;
 
     public interface OnActionListener {
         void onStartDownload(UpdatePreference pref);
+        void onStopCompletingDownload(UpdatePreference pref);
         void onStopDownload(UpdatePreference pref);
         void onStartUpdate(UpdatePreference pref);
         void onDeleteUpdate(UpdatePreference pref);
@@ -63,7 +64,9 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
     private ProgressBar mProgressBar;
     private Button mButton;
 
-    private String mBuildName[];
+    private String mBuildVersionName;
+    private String mBuildDateString;
+    private String mBuildType;
 
     private OnClickListener mButtonClickListener = new OnClickListener() {
         @Override
@@ -73,6 +76,9 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
             }
 
             switch (mStyle) {
+                case STYLE_COMPLETING:
+                    mOnActionListener.onStopCompletingDownload(UpdatePreference.this);
+                    break;
                 case STYLE_DOWNLOADED:
                     mOnActionListener.onStartUpdate(UpdatePreference.this);
                     break;
@@ -86,15 +92,6 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
         }
     };
 
-    private OnClickListener mStopDownloadClickListener = new OnClickListener() {
-        @Override
-        public void onClick(View v) {
-            if (mOnActionListener != null && mStyle == STYLE_DOWNLOADING) {
-                mOnActionListener.onStopDownload(UpdatePreference.this);
-            }
-        }
-    };
-
     public UpdatePreference(Context context, UpdateInfo ui, int style) {
         super(context, null, R.style.UpdatesPreferenceStyle);
         setLayoutResource(R.layout.preference_updates);
@@ -104,23 +101,13 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
     }
 
     @Override
-    protected void onBindView(View view) {
-        super.onBindView(view);
+    public void onBindViewHolder(PreferenceViewHolder view) {
+        super.onBindViewHolder(view);
 
-        mBuildName = mUpdateInfo.getFileName().split("-");
-        final String mBuildDate = Utils.getInstalledBuildDateLocalized(mContext, mBuildName[2]);
-        String mApi;
-        switch (mBuildName[1]) {
-            case "13.0":
-                mApi = "6.0.1";
-                break;
-            case "14.1":
-                mApi = "7.1.1";
-                break;
-            default:
-                mApi = "???";
-                break;
-        }
+        // We only show updates of type Utils.getUpdateType(), so just use that here
+        mBuildType = Utils.buildTypeToString(Utils.getUpdateType()).toLowerCase();
+        mBuildVersionName = Utils.getInstalledVersionName();
+        mBuildDateString = Utils.getDateLocalized(mContext, mUpdateInfo.getDate());
 
         // Store the views from the layout
         mTitleText = (TextView)view.findViewById(R.id.title);
@@ -138,8 +125,8 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
         // Update the views
         updatePreferenceViews();
 
-        mSummaryText.setText(String.format(mContext.getString(R.string.summary), mBuildDate,
-                mBuildName[1], mApi));
+        mSummaryText.setText(String.format(mContext.getString(R.string.summary), mBuildDateString,
+                mBuildVersionName, Utils.getAndroidVersion(mBuildVersionName)));
 
         if (mOnReadyListener != null) {
             mOnReadyListener.onReady(this);
@@ -154,6 +141,7 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
                 confirmDelete();
                 break;
 
+            case STYLE_COMPLETING:
             case STYLE_DOWNLOADING:
             case STYLE_NEW:
             default:
@@ -252,7 +240,7 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
             }
 
             // Set the title text
-            mTitleText.setText(mBuildName[0]);
+            mTitleText.setText(mBuildVersionName);
 
             // Show the proper style view
             showStyle();
@@ -267,7 +255,7 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
                 mProgressBar.setVisibility(View.GONE);
                 mButton.setVisibility(View.VISIBLE);
                 mTitleText.setText(String.format("%1$s %2$s",
-                        mBuildName[3], mContext.getString(R.string.type_downloaded)));
+                        mBuildType, mContext.getString(R.string.type_downloaded)));
                 mButton.setText(mContext.getString(R.string.install_button));
                 break;
 
@@ -276,7 +264,7 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
                 mStopDownloadButton.setVisibility(View.VISIBLE);
                 mProgressBar.setVisibility(View.VISIBLE);
                 mTitleText.setText(String.format("%1$s %2$s",
-                        mBuildName[3], mContext.getString(R.string.type_downloading)));
+                        mBuildType, mContext.getString(R.string.type_downloading)));
                 break;
 
             case STYLE_INSTALLED:
@@ -284,7 +272,16 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
                 mProgressBar.setVisibility(View.GONE);
                 mButton.setVisibility(View.GONE);
                 mTitleText.setText(String.format("%1$s %2$s",
-                        mBuildName[3], mContext.getString(R.string.type_installed)));
+                        mBuildType, mContext.getString(R.string.type_installed)));
+                break;
+
+            case STYLE_COMPLETING:
+                mStopDownloadButton.setVisibility(View.VISIBLE);
+                mProgressBar.setVisibility(View.VISIBLE);
+                mProgressBar.setIndeterminate(true);
+                mButton.setVisibility(View.GONE);
+                mTitleText.setText(String.format("%1$s %2$s",
+                        mBuildType, mContext.getString(R.string.type_completing)));
                 break;
 
             case STYLE_NEW:
@@ -292,7 +289,7 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
                 mStopDownloadButton.setVisibility(View.GONE);
                 mProgressBar.setVisibility(View.GONE);
                 mButton.setVisibility(View.VISIBLE);
-                mTitleText.setText(mBuildName[3]);
+                mTitleText.setText(mBuildType);
                 mButton.setText(mContext.getString(R.string.download_button));
                 break;
         }

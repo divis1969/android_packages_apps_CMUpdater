@@ -26,13 +26,11 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Parcelable;
-import android.preference.ListPreference;
-import android.preference.Preference;
-import android.preference.Preference.OnPreferenceChangeListener;
-import android.preference.PreferenceCategory;
-import android.preference.PreferenceFragment;
-import android.preference.PreferenceManager;
-import android.preference.PreferenceScreen;
+import android.support.v7.preference.ListPreference;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceCategory;
+import android.support.v7.preference.PreferenceFragmentCompat;
+import android.support.v7.preference.PreferenceManager;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -59,8 +57,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedList;
 
-public class UpdatesSettings extends PreferenceFragment implements
-        OnPreferenceChangeListener, UpdatePreference.OnReadyListener, UpdatePreference.OnActionListener {
+public class UpdatesSettings extends PreferenceFragmentCompat implements
+        Preference.OnPreferenceChangeListener, UpdatePreference.OnReadyListener,
+        UpdatePreference.OnActionListener {
     private static String TAG = "UpdatesSettings";
 
     // intent extras
@@ -68,14 +67,7 @@ public class UpdatesSettings extends PreferenceFragment implements
     public static final String EXTRA_FINISHED_DOWNLOAD_ID = "download_id";
     public static final String EXTRA_FINISHED_DOWNLOAD_PATH = "download_path";
 
-    public static final String KEY_SYSTEM_INFO = "system_info";
-    private static final String KEY_DELETE_ALL = "delete_all";
-
     private static final String UPDATES_CATEGORY = "updates_category";
-
-    private static final int MENU_REFRESH = 0;
-    private static final int MENU_DELETE_ALL = 1;
-    private static final int MENU_SYSTEM_INFO = 2;
 
     private SharedPreferences mPrefs;
     private ListPreference mUpdateCheck;
@@ -123,15 +115,13 @@ public class UpdatesSettings extends PreferenceFragment implements
     };
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-
+    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         mContext = getActivity();
 
         mDownloadManager = (DownloadManager) mContext.getSystemService(mContext.DOWNLOAD_SERVICE);
 
         // Load the layouts
-        addPreferencesFromResource(R.xml.main);
+        setPreferencesFromResource(R.xml.main, null);
         mUpdatesList = (PreferenceCategory) findPreference(UPDATES_CATEGORY);
         mUpdateCheck = (ListPreference) findPreference(Constants.UPDATE_CHECK_PREF);
 
@@ -151,16 +141,6 @@ public class UpdatesSettings extends PreferenceFragment implements
         if (updateTypePref != updateType) {
             updateUpdatesType(updateType);
         }
-    }
-
-    @Override
-    public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, Preference preference) {
-        if (preference == findPreference(KEY_SYSTEM_INFO)) {
-            checkForUpdates();
-        } else if (preference == findPreference(KEY_DELETE_ALL)) {
-            confirmDeleteAll();
-        }
-        return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
     @Override
@@ -185,6 +165,8 @@ public class UpdatesSettings extends PreferenceFragment implements
     @Override
     public void onStart() {
         super.onStart();
+
+        getListView().setNestedScrollingEnabled(false);
 
         // Determine if there are any in-progress downloads
         mDownloadId = mPrefs.getLong(Constants.DOWNLOAD_ID, -1);
@@ -218,15 +200,6 @@ public class UpdatesSettings extends PreferenceFragment implements
 
         checkForDownloadCompleted(getActivity().getIntent());
         getActivity().setIntent(null);
-    }
-
-    @Override
-    public void onViewCreated(View mView, Bundle mSavedInstance) {
-        super.onViewCreated(mView, mSavedInstance);
-        // Hide divider
-        ListView mList = (ListView) mView.findViewById(android.R.id.list);
-        mList.setDividerHeight(0);
-        mView.invalidate();
     }
 
     @Override
@@ -315,16 +288,50 @@ public class UpdatesSettings extends PreferenceFragment implements
                     mDownloadingPreference.setStyle(UpdatePreference.STYLE_NEW);
                     resetDownloadState();
                     break;
+                case DownloadManager.STATUS_SUCCESSFUL:
+                    mDownloadingPreference.setStyle(UpdatePreference.STYLE_COMPLETING);
+                    break;
             }
 
             if (cursor != null) {
                 cursor.close();
             }
-            if (status != DownloadManager.STATUS_FAILED) {
+            if (status != DownloadManager.STATUS_FAILED
+                    && status != DownloadManager.STATUS_SUCCESSFUL) {
                 mUpdateHandler.postDelayed(this, 1000);
             }
         }
     };
+
+    @Override
+    public void onStopCompletingDownload(final UpdatePreference pref) {
+        if (!mDownloading || mFileName == null) {
+            pref.setStyle(UpdatePreference.STYLE_NEW);
+            resetDownloadState();
+            return;
+        }
+
+        final File tmpZip = new File(mUpdateFolder, mFileName + Constants.DOWNLOAD_TMP_EXT);
+        new AlertDialog.Builder(mContext)
+                .setTitle(R.string.confirm_download_cancelation_dialog_title)
+                .setMessage(R.string.confirm_download_cancelation_dialog_message)
+                .setPositiveButton(R.string.dialog_ok, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (!tmpZip.isFile() || tmpZip.delete()) {
+                            // Set the preference back to new style
+                            pref.setStyle(UpdatePreference.STYLE_NEW);
+                            resetDownloadState();
+                            showSnack(mContext.getString(R.string.download_cancelled));
+                        } else {
+                            Log.e(TAG, "Could not delete temp zip");
+                            showSnack(mContext.getString(R.string.unable_to_stop_download));
+                        }
+                    }
+                })
+                .setNegativeButton(R.string.dialog_cancel, null)
+                .show();
+    }
 
     @Override
     public void onStopDownload(final UpdatePreference pref) {
@@ -518,6 +525,10 @@ public class UpdatesSettings extends PreferenceFragment implements
         }.start();
     }
 
+    private boolean isDownloadCompleting(String fileName) {
+        return new File(mUpdateFolder, fileName + Constants.DOWNLOAD_TMP_EXT).isFile();
+    }
+
     private void refreshPreferences(LinkedList<UpdateInfo> updates) {
         if (mUpdatesList == null) {
             return;
@@ -529,24 +540,19 @@ public class UpdatesSettings extends PreferenceFragment implements
         // Convert the installed version name to the associated filename
         String installedZip = "lineage-" + Utils.getInstalledVersion() + ".zip";
 
-        // Convert LinkedList to HashMap, keyed on filename.
-        HashMap<String, UpdateInfo> updatesMap = new HashMap<String, UpdateInfo>();
-        for (UpdateInfo ui : updates) {
-            updatesMap.put(ui.getFileName(), ui);
-        }
-
         // Add the updates
         for (UpdateInfo ui : updates) {
             // Determine the preference style and create the preference
             boolean isDownloading = ui.getFileName().equals(mFileName);
             int style;
 
-            Log.d("OHAI", installedZip);
-            Log.d("OHAI", ui.getFileName());
-
             if (isDownloading) {
                 // In progress download
                 style = UpdatePreference.STYLE_DOWNLOADING;
+            } else if (isDownloadCompleting(ui.getFileName())) {
+                style = UpdatePreference.STYLE_COMPLETING;
+                mDownloading = true;
+                mFileName = ui.getFileName();
             } else if (ui.getFileName().replace("-signed", "").equals(installedZip)) {
                 // This is the currently installed version
                 style = UpdatePreference.STYLE_INSTALLED;
@@ -615,7 +621,6 @@ public class UpdatesSettings extends PreferenceFragment implements
 
         mFileName = ui.getFileName();
         mDownloading = true;
-        mPrefs.edit().putString(Constants.DOWNLOAD_NAME, mFileName).commit();
 
         // Start the download
         Intent intent = new Intent(mContext, DownloadReceiver.class);
@@ -626,7 +631,7 @@ public class UpdatesSettings extends PreferenceFragment implements
         mUpdateHandler.post(mUpdateProgress);
     }
 
-    private void confirmDeleteAll() {
+    public void confirmDeleteAll() {
         new AlertDialog.Builder(getActivity())
                 .setTitle(R.string.confirm_delete_dialog_title)
                 .setMessage(R.string.confirm_delete_all_dialog_message)

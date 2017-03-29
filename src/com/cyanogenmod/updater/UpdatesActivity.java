@@ -10,12 +10,13 @@ package com.cyanogenmod.updater;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Bundle;
-import android.preference.PreferenceManager;
 import android.support.design.widget.AppBarLayout;
 import android.support.design.widget.CollapsingToolbarLayout;
 import android.support.design.widget.Snackbar;
 import android.support.v7.app.AppCompatActivity;
+import android.support.v7.preference.PreferenceManager;
 import android.support.v7.widget.Toolbar;
 import android.text.format.DateFormat;
 import android.view.Menu;
@@ -31,29 +32,28 @@ public class UpdatesActivity extends AppCompatActivity {
 
     private TextView mHeaderInfo;
     private UpdatesSettings mSettingsFragment;
-    private String[] mInstalled;
 
     @Override
     protected void onCreate(Bundle savedInstance) {
         super.onCreate(savedInstance);
         setContentView(R.layout.activity_updater);
 
-        Toolbar mToolbar = (Toolbar) findViewById(R.id.toolbar);
-        TextView mHeaderCm = (TextView) findViewById(R.id.header_version);
+        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        TextView headerCm = (TextView) findViewById(R.id.header_version);
         mHeaderInfo = (TextView) findViewById(R.id.header_info);
 
         mSettingsFragment = new UpdatesSettings();
 
-        mInstalled = Utils.getInstalledVersion().split("-");
-        mHeaderCm.setText(String.format(getString(R.string.header_os), mInstalled[0]));
+        final String version = Utils.getInstalledVersionName();
+        headerCm.setText(String.format(getString(R.string.header_os), version));
 
-        getFragmentManager().beginTransaction()
+        getSupportFragmentManager().beginTransaction()
                 .replace(R.id.content_frame, mSettingsFragment).commit();
 
         updateHeader();
-        mToolbar.setTitle("");
-        mToolbar.setNavigationIcon(R.drawable.ic_logo);
-        setSupportActionBar(mToolbar);
+        toolbar.setTitle("");
+        toolbar.setNavigationIcon(R.drawable.ic_logo);
+        setSupportActionBar(toolbar);
 
         final CollapsingToolbarLayout collapsingToolbar = (CollapsingToolbarLayout)
                 findViewById(R.id.collapsing_toolbar);
@@ -88,50 +88,46 @@ public class UpdatesActivity extends AppCompatActivity {
     }
 
     @Override
-    public boolean onCreateOptionsMenu(Menu mMenu) {
-        getMenuInflater().inflate(R.menu.menu, mMenu);
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.menu, menu);
         return true;
     }
 
     @Override
-    public boolean onOptionsItemSelected(MenuItem mItem) {
-        switch (mItem.getItemId()) {
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
             case R.id.menu_refresh:
                 if (mSettingsFragment != null) {
                     mSettingsFragment.checkForUpdates();
                     updateHeader();
                 }
                 break;
+            case R.id.menu_delete_all:
+                if (mSettingsFragment != null) {
+                    mSettingsFragment.confirmDeleteAll();
+                }
+                break;
         }
 
-        return super.onOptionsItemSelected(mItem);
+        return super.onOptionsItemSelected(item);
     }
 
     private void updateHeader() {
-        String mApi = String.valueOf(Utils.getInstalledApiLevel());
-        switch (mApi) {
-            case "25":
-                mApi = "7.1.1";
-                break;
-            default:
-                mApi = "API " + mApi;
-        }
-
         mHeaderInfo.setText(String.format(getString(R.string.header_summary),
-                Utils.getInstalledBuildDateLocalized(this, mInstalled[1]),
-                mInstalled[2], mApi, getLastCheck()));
+                Utils.getDateLocalized(this, Utils.getInstalledBuildDate()),
+                Utils.getInstalledBuildType(), Build.VERSION.RELEASE, getLastCheck()));
     }
 
     private String getLastCheck() {
-        SharedPreferences mPrefs = PreferenceManager.getDefaultSharedPreferences(this);
-        Date mLastCheck = new Date(mPrefs.getLong(Constants.LAST_UPDATE_CHECK_PREF, 0));
-        String mDate = DateFormat.getLongDateFormat(this).format(mLastCheck);
-        String mTime = DateFormat.getTimeFormat(this).format(mLastCheck);
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        Date lastCheck = new Date(prefs.getLong(Constants.LAST_UPDATE_CHECK_PREF, 0));
+        String date = DateFormat.getLongDateFormat(this).format(lastCheck);
+        String time = DateFormat.getTimeFormat(this).format(lastCheck);
         return String.format("%1$s %2$s (%3$s)", getString(R.string.sysinfo_last_check),
-                mDate, mTime);
+                date, time);
     }
 
-    void showSnack(String mMessage) {
-        Snackbar.make(findViewById(R.id.coordinator), mMessage, Snackbar.LENGTH_LONG).show();
+    void showSnack(String message) {
+        Snackbar.make(findViewById(R.id.coordinator), message, Snackbar.LENGTH_LONG).show();
     }
 }
